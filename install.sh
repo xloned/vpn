@@ -30,21 +30,36 @@ if [[ -f "$INSTALL_DIR/.env" ]]; then
     warn "Found existing .env, using saved values"
 fi
 
+ask() {
+    local prompt="$1" var="$2"
+    if [[ -t 0 ]]; then
+        read -rp "$prompt" "$var"
+    elif [[ -e /dev/tty ]]; then
+        read -rp "$prompt" "$var" < /dev/tty
+    else
+        err "Cannot read input. Run the script directly instead of piping:\n  git clone https://github.com/xloned/vpn.git && cd vpn && bash install.sh"
+    fi
+}
+
 if [[ -z "${TG_BOT_TOKEN:-}" ]]; then
-    read -rp "Telegram Bot Token: " TG_BOT_TOKEN < /dev/tty
+    ask "Telegram Bot Token: " TG_BOT_TOKEN
 fi
 if [[ -z "${TG_ADMIN_ID:-}" ]]; then
-    read -rp "Telegram Admin Chat ID: " TG_ADMIN_ID < /dev/tty
+    ask "Telegram Admin Chat ID: " TG_ADMIN_ID
 fi
 if [[ -z "${DOMAIN:-}" ]]; then
-    read -rp "Server domain or IP: " DOMAIN < /dev/tty
+    ask "Server domain or IP: " DOMAIN
 fi
 
-cat > "$INSTALL_DIR/.env" <<EOF
+[[ -z "$TG_BOT_TOKEN" ]] && err "Bot token cannot be empty"
+[[ -z "$TG_ADMIN_ID" ]]  && err "Admin chat ID cannot be empty"
+[[ -z "$DOMAIN" ]]        && err "Domain/IP cannot be empty"
+
+cat > "$INSTALL_DIR/.env" <<ENVEOF
 TG_BOT_TOKEN=$TG_BOT_TOKEN
 TG_ADMIN_ID=$TG_ADMIN_ID
 DOMAIN=$DOMAIN
-EOF
+ENVEOF
 chmod 600 "$INSTALL_DIR/.env"
 
 # ── System ──────────────────────────────────────────────
@@ -227,7 +242,7 @@ fi
 
 cp "$CONFIG_DIR/hysteria2.yaml" /etc/hysteria/config.yaml
 
-cat > /etc/systemd/system/hysteria-server.service <<EOF
+cat > /etc/systemd/system/hysteria-server.service <<'SVCEOF'
 [Unit]
 Description=Hysteria2 Server
 After=network.target
@@ -241,7 +256,7 @@ LimitNOFILE=1048576
 
 [Install]
 WantedBy=multi-user.target
-EOF
+SVCEOF
 
 systemctl daemon-reload
 systemctl enable hysteria-server
@@ -251,17 +266,17 @@ log "Hysteria2 installed (port $HYSTERIA_PORT/UDP)"
 # ── Telegram Bot ────────────────────────────────────────
 log "Setting up Telegram bot..."
 
-cat > "$BOT_DIR/requirements.txt" <<EOF
+cat > "$BOT_DIR/requirements.txt" <<'REQEOF'
 python-telegram-bot==21.6
 aiohttp==3.10.11
 psutil==6.1.0
 python-dotenv==1.0.1
-EOF
+REQEOF
 
 python3 -m venv "$BOT_DIR/venv"
 "$BOT_DIR/venv/bin/pip" install -q -r "$BOT_DIR/requirements.txt"
 
-cp /dev/stdin "$BOT_DIR/bot.py" << 'BOTEOF'
+cat > "$BOT_DIR/bot.py" << 'BOTEOF'
 import os
 import json
 import asyncio
@@ -560,12 +575,12 @@ if __name__ == "__main__":
     main()
 BOTEOF
 
-cat > "$BOT_DIR/requirements.txt" <<EOF
+cat > "$BOT_DIR/requirements.txt" <<'REQEOF'
 python-telegram-bot==21.6
 aiohttp==3.10.11
 psutil==6.1.0
 python-dotenv==1.0.1
-EOF
+REQEOF
 
 # ── Monitor script ──────────────────────────────────────
 cat > "$SCRIPTS_DIR/monitor.sh" << 'MONEOF'
@@ -619,7 +634,7 @@ MONEOF
 chmod +x "$SCRIPTS_DIR/monitor.sh"
 
 # ── Bot systemd service ────────────────────────────────
-cat > /etc/systemd/system/vpn-bot.service <<EOF
+cat > /etc/systemd/system/vpn-bot.service <<BOTSERVICE
 [Unit]
 Description=VPN Telegram Bot
 After=network.target
@@ -634,7 +649,7 @@ EnvironmentFile=$INSTALL_DIR/.env
 
 [Install]
 WantedBy=multi-user.target
-EOF
+BOTSERVICE
 
 systemctl daemon-reload
 systemctl enable vpn-bot
