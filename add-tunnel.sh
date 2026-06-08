@@ -117,11 +117,13 @@ else
     log "VLESS+WS already configured (path: $WS_PATH)"
 fi
 
-# ── Stop nginx if running (not needed with tunnel) ────
-if systemctl is-active --quiet nginx; then
-    systemctl stop nginx
-    systemctl disable nginx
-    log "Stopped nginx (not needed with Cloudflare Tunnel)"
+# ── Ensure nginx is running (tunnel proxies to it) ────
+if ! systemctl is-active --quiet nginx; then
+    systemctl start nginx
+    systemctl enable nginx
+    log "Started nginx"
+else
+    log "Nginx already running"
 fi
 
 # ── Install cloudflared ────────────────────────────────
