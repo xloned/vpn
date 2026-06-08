@@ -45,7 +45,7 @@ if [[ -z "${TG_BOT_TOKEN:-}" ]]; then
     ask "Telegram Bot Token: " TG_BOT_TOKEN
 fi
 if [[ -z "${TG_ADMIN_ID:-}" ]]; then
-    ask "Telegram Admin Chat ID: " TG_ADMIN_ID
+    ask "Telegram Admin Chat ID (number, get from @userinfobot): " TG_ADMIN_ID
 fi
 if [[ -z "${DOMAIN:-}" ]]; then
     ask "Server domain or IP: " DOMAIN
@@ -161,7 +161,7 @@ cat > "$CONFIG_DIR/xray.json" <<XEOF
 }
 XEOF
 
-mkdir -p /var/log/xray
+mkdir -p /var/log/xray /usr/local/etc/xray
 chown -R nobody:nogroup /var/log/xray
 cp "$CONFIG_DIR/xray.json" /usr/local/etc/xray/config.json
 
