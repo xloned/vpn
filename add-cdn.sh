@@ -41,7 +41,6 @@ echo "This adds a CDN-proxied connection that bypasses IP-based blocking."
 echo "TSPU will see traffic going to Cloudflare, not your server."
 echo ""
 echo "You need a domain managed through Cloudflare (free plan works)."
-echo "A cheap .xyz/.site domain costs ~100 rub/year."
 echo ""
 
 if [[ -z "${CDN_DOMAIN:-}" ]]; then
@@ -57,11 +56,14 @@ else
 fi
 
 # ── Generate WS path (random, hard to detect) ──────────
-WS_PATH="/$(openssl rand -hex 12)"
-echo "$WS_PATH" > "$DATA_DIR/ws_path"
+if [[ -f "$DATA_DIR/ws_path" ]]; then
+    WS_PATH=$(cat "$DATA_DIR/ws_path")
+    log "Using existing WS path: $WS_PATH"
+else
+    WS_PATH="/$(openssl rand -hex 12)"
+    echo "$WS_PATH" > "$DATA_DIR/ws_path"
+fi
 echo "$CDN_DOMAIN" > "$DATA_DIR/cdn_domain"
-
-log "WS path: $WS_PATH"
 
 # ── Build VLESS-WS users JSON ──────────────────────────
 USERS_WS_JSON="[]"
@@ -102,7 +104,6 @@ WS_INBOUND=$(cat <<WSJSON
 WSJSON
 )
 
-# Remove existing vless-ws inbound if any, then add new one
 jq --argjson ws "$WS_INBOUND" '
   .inbounds = [.inbounds[] | select(.tag != "vless-ws")] + [$ws]
 ' "$XRAY_CONFIG" > /tmp/xray_cdn.json && mv /tmp/xray_cdn.json "$XRAY_CONFIG"
@@ -110,27 +111,35 @@ jq --argjson ws "$WS_INBOUND" '
 systemctl restart xray
 log "Xray restarted with VLESS+WS on 127.0.0.1:${WS_PORT}"
 
-# ── Install nginx as TLS terminator + WS proxy ────────
+# ── Install nginx ──────────────────────────────────────
 log "Installing nginx..."
-apt-get install -y -qq nginx certbot python3-certbot-nginx > /dev/null
+apt-get install -y -qq nginx > /dev/null
 
-# Stop nginx for certbot standalone
 systemctl stop nginx 2>/dev/null || true
 
-# Get real TLS cert
-log "Getting TLS certificate for $CDN_DOMAIN..."
-certbot certonly --standalone --agree-tos --register-unsafely-without-email \
-    -d "$CDN_DOMAIN" --non-interactive || {
-    err "Certbot failed. Make sure:\n  1. Domain $CDN_DOMAIN has an A record pointing to $(curl -s ifconfig.me)\n  2. Cloudflare proxy (orange cloud) is TEMPORARILY OFF for cert issuance\n  3. Port 80 is open"
-}
+# ── TLS certificate via Cloudflare Origin CA ───────────
+# No need for certbot or DNS propagation!
+# We generate a self-signed cert that Cloudflare trusts via "Full" SSL mode.
+# Cloudflare handles the real TLS to the client.
+
+CERT_DIR="/etc/nginx/ssl"
+mkdir -p "$CERT_DIR"
+
+log "Generating origin certificate..."
+openssl ecparam -name prime256v1 -genkey -noout -out "$CERT_DIR/origin.key"
+openssl req -new -x509 -key "$CERT_DIR/origin.key" \
+    -out "$CERT_DIR/origin.crt" \
+    -subj "/CN=$CDN_DOMAIN" -days 3650
+
+log "Certificate created (valid 10 years, Cloudflare terminates real TLS)"
 
 cat > /etc/nginx/sites-available/vpn-cdn <<NGEOF
 server {
     listen 443 ssl http2;
     server_name ${CDN_DOMAIN};
 
-    ssl_certificate /etc/letsencrypt/live/${CDN_DOMAIN}/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/${CDN_DOMAIN}/privkey.pem;
+    ssl_certificate ${CERT_DIR}/origin.crt;
+    ssl_certificate_key ${CERT_DIR}/origin.key;
     ssl_protocols TLSv1.2 TLSv1.3;
     ssl_ciphers HIGH:!aNULL:!MD5;
 
@@ -149,11 +158,10 @@ server {
         proxy_send_timeout 60s;
     }
 
-    # Fake website for everything else
+    # Normal-looking website for everything else
     location / {
-        proxy_pass https://www.google.com;
-        proxy_set_header Host www.google.com;
-        proxy_ssl_server_name on;
+        default_type text/html;
+        return 200 '<!DOCTYPE html><html><head><title>Welcome</title></head><body><h1>It works!</h1></body></html>';
     }
 }
 
@@ -167,10 +175,9 @@ NGEOF
 ln -sf /etc/nginx/sites-available/vpn-cdn /etc/nginx/sites-enabled/
 rm -f /etc/nginx/sites-enabled/default
 
-# Hysteria uses 443/UDP, nginx uses 443/TCP — no conflict
 nginx -t && systemctl restart nginx
 systemctl enable nginx
-log "Nginx configured as TLS+WS proxy"
+log "Nginx configured"
 
 # ── Firewall ───────────────────────────────────────────
 if command -v ufw &>/dev/null; then
@@ -184,23 +191,33 @@ echo "=========================================="
 echo -e "${GREEN}  CDN Setup Complete${NC}"
 echo "=========================================="
 echo ""
-echo "IMPORTANT: Now go to Cloudflare dashboard and:"
-echo "  1. Set DNS A record: ${CDN_DOMAIN} -> $(curl -s ifconfig.me)"
-echo "  2. Turn ON the orange cloud (Proxied) for the record"
-echo "  3. SSL/TLS mode: Full (strict)"
+echo "IMPORTANT: In Cloudflare dashboard:"
+echo "  1. DNS: A record ${CDN_DOMAIN} -> $(curl -s ifconfig.me) with orange cloud (Proxied)"
+echo "  2. SSL/TLS -> set to 'Full' (NOT 'Full strict', NOT 'Flexible')"
+echo "  3. Under SSL/TLS -> Edge Certificates -> enable 'Always Use HTTPS'"
 echo ""
-echo "Client links (via Cloudflare CDN):"
+echo "No need to wait for DNS propagation to set this up!"
 echo ""
+echo "=========================================="
+echo "  Client links (via Cloudflare CDN):"
+echo "=========================================="
+echo ""
+
+WS_PATH_ENCODED=$(echo "$WS_PATH" | sed 's|/|%2F|g')
 
 for i in $(seq 1 5); do
     UUID_FILE="$DATA_DIR/user_${i}_uuid"
     [[ ! -f "$UUID_FILE" ]] && continue
     UUID=$(cat "$UUID_FILE")
     echo "--- User $i (CDN) ---"
-    echo "vless://${UUID}@${CDN_DOMAIN}:443?security=tls&sni=${CDN_DOMAIN}&type=ws&path=$(echo "$WS_PATH" | sed 's|/|%2F|g')&encryption=none#CDN-User${i}"
+    echo "vless://${UUID}@${CDN_DOMAIN}:443?security=tls&sni=${CDN_DOMAIN}&type=ws&path=${WS_PATH_ENCODED}&encryption=none#CDN-User${i}"
     echo ""
 done
 
-echo "These links go through Cloudflare — TSPU cannot block them."
+echo "These links route through Cloudflare — your server IP is hidden."
+echo "Works even if the server IP is blocked by TSPU."
+echo ""
+echo "NOTE: Links will work once DNS propagation completes"
+echo "      and orange cloud (Proxied) is ON in Cloudflare."
 echo ""
 log "Done!"
