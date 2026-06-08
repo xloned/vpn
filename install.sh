@@ -162,6 +162,7 @@ cat > "$CONFIG_DIR/xray.json" <<XEOF
 XEOF
 
 mkdir -p /var/log/xray
+chown -R nobody:nogroup /var/log/xray
 cp "$CONFIG_DIR/xray.json" /usr/local/etc/xray/config.json
 
 systemctl enable xray
@@ -172,17 +173,18 @@ log "Xray installed (VLESS+Reality on port $REALITY_PORT)"
 log "Installing Hysteria2..."
 bash -c "$(curl -sL https://get.hy2.sh/)"
 
-HYSTERIA_PASSWORD=$(openssl rand -base64 24)
-echo "$HYSTERIA_PASSWORD" > "$DATA_DIR/hysteria_password"
+HYSTERIA_OBFS_PASS=$(openssl rand -base64 16)
+echo "$HYSTERIA_OBFS_PASS" > "$DATA_DIR/hysteria_obfs_pass"
 
-HYSTERIA_USERS=""
+HYSTERIA_API_SECRET=$(openssl rand -base64 24)
+echo "$HYSTERIA_API_SECRET" > "$DATA_DIR/hysteria_api_secret"
+
+HY_USERPASS_BLOCK=""
 for i in $(seq 1 5); do
     PASS=$(openssl rand -base64 16)
     echo "$PASS" > "$DATA_DIR/hysteria_user_${i}_pass"
-    HYSTERIA_USERS="${HYSTERIA_USERS}  user${i}: ${PASS}\n"
+    HY_USERPASS_BLOCK="${HY_USERPASS_BLOCK}    user${i}: ${PASS}\n"
 done
-
-HYSTERIA_OBFS_PASS=$(openssl rand -base64 16)
 
 cat > "$CONFIG_DIR/hysteria2.yaml" <<HEOF
 listen: :${HYSTERIA_PORT}
@@ -197,8 +199,9 @@ obfs:
     password: ${HYSTERIA_OBFS_PASS}
 
 auth:
-  type: password
-  password: ${HYSTERIA_PASSWORD}
+  type: userpass
+  userpass:
+$(echo -e "$HY_USERPASS_BLOCK")
 
 masquerade:
   type: proxy
@@ -208,7 +211,7 @@ masquerade:
 
 trafficStats:
   listen: 127.0.0.1:9999
-  secret: ${HYSTERIA_PASSWORD}
+  secret: ${HYSTERIA_API_SECRET}
 
 bandwidth:
   up: 1 gbps
@@ -387,7 +390,7 @@ async def get_xray_stats() -> dict:
 
 async def get_hysteria_stats() -> dict:
     password = ""
-    pass_file = DATA_DIR / "hysteria_password"
+    pass_file = DATA_DIR / "hysteria_api_secret"
     if pass_file.exists():
         password = pass_file.read_text().strip()
     try:
@@ -499,8 +502,8 @@ async def cmd_configs(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
         if hy_file.exists():
             hy_pass = hy_file.read_text().strip()
-            hy_password = (DATA_DIR / "hysteria_password").read_text().strip()
-            hy_link = f"hysteria2://{hy_password}@{domain}:443?obfs=salamander&obfs-password={hy_pass}#HY2-User{i}"
+            hy_obfs = (DATA_DIR / "hysteria_obfs_pass").read_text().strip()
+            hy_link = f"hysteria2://user{i}:{hy_pass}@{domain}:443?obfs=salamander&obfs-password={hy_obfs}&insecure=1#HY2-User{i}"
             lines.append(f"Hysteria2:\n<code>{hy_link}</code>\n")
 
     text = "\n".join(lines)
@@ -687,7 +690,7 @@ echo ""
 log "Generating client configs..."
 PUB_KEY=$(cat "$DATA_DIR/reality_public_key")
 SID=$(cat "$DATA_DIR/reality_short_id")
-HY_PASS=$(cat "$DATA_DIR/hysteria_password")
+HY_OBFS=$(cat "$DATA_DIR/hysteria_obfs_pass")
 
 for i in $(seq 1 5); do
     UUID=$(cat "$DATA_DIR/user_${i}_uuid")
@@ -697,7 +700,7 @@ for i in $(seq 1 5); do
 
     if [[ -f "$DATA_DIR/hysteria_user_${i}_pass" ]]; then
         HY_USER_PASS=$(cat "$DATA_DIR/hysteria_user_${i}_pass")
-        echo "HY2:   hysteria2://${HY_PASS}@${DOMAIN}:${HYSTERIA_PORT}?obfs=salamander&obfs-password=${HY_USER_PASS}#HY2-User${i}"
+        echo "HY2:   hysteria2://user${i}:${HY_USER_PASS}@${DOMAIN}:${HYSTERIA_PORT}?obfs=salamander&obfs-password=${HY_OBFS}&insecure=1#HY2-User${i}"
     fi
 done
 
