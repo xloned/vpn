@@ -31,13 +31,13 @@ if [[ -f "$INSTALL_DIR/.env" ]]; then
 fi
 
 if [[ -z "${TG_BOT_TOKEN:-}" ]]; then
-    read -rp "Telegram Bot Token: " TG_BOT_TOKEN
+    read -rp "Telegram Bot Token: " TG_BOT_TOKEN < /dev/tty
 fi
 if [[ -z "${TG_ADMIN_ID:-}" ]]; then
-    read -rp "Telegram Admin Chat ID: " TG_ADMIN_ID
+    read -rp "Telegram Admin Chat ID: " TG_ADMIN_ID < /dev/tty
 fi
 if [[ -z "${DOMAIN:-}" ]]; then
-    read -rp "Server domain or IP: " DOMAIN
+    read -rp "Server domain or IP: " DOMAIN < /dev/tty
 fi
 
 cat > "$INSTALL_DIR/.env" <<EOF
@@ -204,8 +204,8 @@ mkdir -p /etc/hysteria
 
 if [[ "$DOMAIN" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
     log "IP detected, generating self-signed cert..."
-    openssl req -x509 -nodes -newkey ec:<(openssl ecparam -name prime256v1) \
-        -keyout /etc/hysteria/server.key \
+    openssl ecparam -name prime256v1 -genkey -noout -out /etc/hysteria/server.key
+    openssl req -new -x509 -key /etc/hysteria/server.key \
         -out /etc/hysteria/server.crt \
         -subj "/CN=bing.com" -days 3650
 else
@@ -214,8 +214,8 @@ else
     certbot certonly --standalone --agree-tos --register-unsafely-without-email \
         -d "$DOMAIN" --non-interactive || {
         warn "Certbot failed, using self-signed cert"
-        openssl req -x509 -nodes -newkey ec:<(openssl ecparam -name prime256v1) \
-            -keyout /etc/hysteria/server.key \
+        openssl ecparam -name prime256v1 -genkey -noout -out /etc/hysteria/server.key
+        openssl req -new -x509 -key /etc/hysteria/server.key \
             -out /etc/hysteria/server.crt \
             -subj "/CN=$DOMAIN" -days 3650
     }
