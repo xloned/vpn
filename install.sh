@@ -72,8 +72,8 @@ log "Installing Xray..."
 bash -c "$(curl -sL https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
 
 REALITY_KEYS=$(xray x25519)
-REALITY_PRIVATE_KEY=$(echo "$REALITY_KEYS" | grep "Private" | awk '{print $3}')
-REALITY_PUBLIC_KEY=$(echo "$REALITY_KEYS" | grep "Public" | awk '{print $3}')
+REALITY_PRIVATE_KEY=$(echo "$REALITY_KEYS" | grep -i "private" | awk '{print $NF}')
+REALITY_PUBLIC_KEY=$(echo "$REALITY_KEYS" | grep -i "public" | awk '{print $NF}')
 REALITY_SHORT_ID=$(openssl rand -hex 8)
 
 echo "$REALITY_PUBLIC_KEY" > "$DATA_DIR/reality_public_key"
