@@ -506,6 +506,20 @@ async def cmd_configs(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             hy_link = f"hysteria2://user{i}:{hy_pass}@{domain}:443?obfs=salamander&obfs-password={hy_obfs}&insecure=1#HY2-User{i}"
             lines.append(f"Hysteria2:\n<code>{hy_link}</code>\n")
 
+        ws_path_file = DATA_DIR / "ws_path"
+        cdn_domain_file = DATA_DIR / "cdn_domain"
+        if ws_path_file.exists() and cdn_domain_file.exists():
+            ws_path = ws_path_file.read_text().strip().replace("/", "%2F")
+            cdn_domain = cdn_domain_file.read_text().strip()
+            cdn_link = (
+                f"vless://{uuid}@{cdn_domain}:443"
+                f"?security=tls&sni={cdn_domain}"
+                f"&type=ws&path={ws_path}"
+                f"&encryption=none"
+                f"#CDN-User{i}"
+            )
+            lines.append(f"CDN (Cloudflare):\n<code>{cdn_link}</code>\n")
+
     text = "\n".join(lines)
     if update.message:
         await update.message.reply_text(text, parse_mode="HTML")
